@@ -7,7 +7,7 @@ This patch hijacks the "Show calibre tags/keywords" field to display the year of
 <img width="1264" height="697" alt="image" src="https://github.com/user-attachments/assets/4acd0995-fea9-4518-9c90-da1affe37e5d" />
 
 #### Adjust timezone
-Because Calibre creates UTC dates when you enter a year into the "Published" field the wrong date can be shown on your reader. For example: if you entered "1989" Calibre will create the UTC date 1989-01-01T00:00:00+00:00, but only if you live in Greenwich. If you live in the CET timezone instead it will adjust for the difference and store the date as 1988-12-31T23:00:00+00:00. So instead of 1989 the reader will show 1988.
+Because Calibre creates UTC dates when you enter a year into the "Published" field the wrong date can be shown on your reader. For example: if you entered "1989" but live in the CET timezone Calibre will create the UTC date 1988-12-31T23:00:00+00:00. So instead of 1989 the reader will show 1988.
 
 Adjust the `TIMEZONE_OFFSET_HOURS` by the number of hours your timezone differs from UTC to prevent that.
 
