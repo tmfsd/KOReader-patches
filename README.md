@@ -14,6 +14,7 @@ Adjust the `TIMEZONE_OFFSET_HOURS` by the number of hours your timezone differs 
 #### Font Size
 You can adjust how the text looks:
 
+``` lua
 -- Make text bigger (less offset from author font size)
 local CUSTOM_FONT_SIZE_OFFSET = 1
 
@@ -22,6 +23,7 @@ local CUSTOM_FONT_SIZE_OFFSET = 5
 
 -- Set minimum font size
 local CUSTOM_FONT_MIN = 12
+```
 
 -----
 
