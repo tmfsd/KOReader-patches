@@ -23,3 +23,7 @@ local CUSTOM_FONT_SIZE_OFFSET = 5
 
 -- Set minimum font size
 local CUSTOM_FONT_MIN = 12
+
+## [🞂 2-pt-no-blank-foldercovers.lua](2-pt-no-blank-foldercovers.lua)
+
+This patch removes blank placeholders from the folder covers in Cover Grid view and Cover List view if a folder and it\'s subfolders hold less than four books.
