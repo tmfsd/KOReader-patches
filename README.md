@@ -23,6 +23,8 @@ local CUSTOM_FONT_SIZE_OFFSET = 5
 -- Set minimum font size
 local CUSTOM_FONT_MIN = 12
 
+-----
+
 ## [🞂 2-pt-no-blank-foldercovers.lua](2-pt-no-blank-foldercovers.lua)
 
 <img width="1264" height="840" alt="image" src="https://github.com/user-attachments/assets/a3e506d5-399a-496a-93d4-52c2f9793a20" />
