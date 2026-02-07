@@ -24,19 +24,14 @@ local CUSTOM_FONT_MIN = nil   -- Default is 10
 local function patchCoverBrowser(CoverBrowser)
     local logger = require("logger")
     local _ = require("gettext")
-    local BD = require("ui/bidi")
-    local util = require("util")
     local Device = require("device")
     local BookInfoManager = require("bookinfomanager")
     local ptutil = require("ptutil")
 
     logger.info("PT Year-Pages-Tags Patch: Loading")
 
-    -- FIX: Attach cache to the singleton BookInfoManager so it persists
-    if not BookInfoManager._pt_patch_cache then
-        BookInfoManager._pt_patch_cache = {}
-    end
-    local bookinfo_cache = BookInfoManager._pt_patch_cache
+    -- Cache indexed by FILEPATH
+    local bookinfo_cache = {}
 
     local original_formatTags = ptutil.formatTags
 
@@ -61,7 +56,9 @@ local function patchCoverBrowser(CoverBrowser)
             if fh then
                 while true do
                     line = fh:read()
-                    if line == nil or opf_file ~= nil then break end
+                    if line == nil or opf_file ~= nil then
+                        break
+                    end
                     opf_file = string.match(line, opf_match_pattern)
                 end
                 fh:close()
@@ -77,7 +74,9 @@ local function patchCoverBrowser(CoverBrowser)
             end
         end
 
-        if not opf_file then return nil end
+        if not opf_file then
+            return nil
+        end
 
         -- Extract and parse the OPF file
         local expand_opf_command = "unzip -p \"" .. filepath .. "\" \"" .. opf_file .. "\" 2>/dev/null"
@@ -87,6 +86,7 @@ local function patchCoverBrowser(CoverBrowser)
             local fh = io.popen(expand_opf_command, "r")
             if fh then
                 for opf_line in fh:lines() do
+                    -- Look for dc:date tag
                     local date_match = string.match(opf_line, "<dc:date[^>]*>([^<]+)</dc:date>")
                     if date_match then
                         dc_date = date_match
@@ -99,6 +99,7 @@ local function patchCoverBrowser(CoverBrowser)
             local std_out = io.popen(expand_opf_command, "r")
             if std_out then
                 for opf_line in std_out:lines() do
+                    -- Look for dc:date tag
                     local date_match = string.match(opf_line, "<dc:date[^>]*>([^<]+)</dc:date>")
                     if date_match then
                         dc_date = date_match
@@ -109,31 +110,177 @@ local function patchCoverBrowser(CoverBrowser)
             end
         end
 
-        if not dc_date then return nil end
+        if not dc_date then
+            return nil
+        end
 
-        -- Parse the date string logic (Simplified for brevity, same as before)
-        if string.match(dc_date, "^%d%d%d%d$") then return tonumber(dc_date) end
+        -- Parse the date string (ISO 8601 format: YYYY-MM-DDTHH:MM:SS+00:00 or similar)
+        -- Examples: "1988-12-31T23:00:00+00:00", "1989-01-01", "1989"
 
+        -- If we only have a year (e.g., "1989")
+        if string.match(dc_date, "^%d%d%d%d$") then
+            return tonumber(dc_date)
+        end
+
+        -- Try to match the full ISO 8601 format: YYYY-MM-DDTHH:MM:SS+00:00
         local year, month, day, hour, minute, second, tz_offset =
             string.match(dc_date, "(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d):(%d%d)([%+%-]%d%d:?%d%d)")
 
+        -- If that doesn't match, try without seconds
         if not year then
             year, month, day, hour, minute, tz_offset =
                 string.match(dc_date, "(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d)([%+%-]%d%d:?%d%d)")
         end
+
+        -- If that doesn't match, try without timezone
         if not year then
-             year, month, day, hour, minute, second =
+            year, month, day, hour, minute, second =
                 string.match(dc_date, "(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d):(%d%d)")
         end
+
+        -- If that doesn't match, try date only
         if not year then
             year, month, day = string.match(dc_date, "(%d%d%d%d)%-(%d%d)%-(%d%d)")
         end
 
-        if not year then return nil end
+        if not year then
+            return nil
+        end
 
         year = tonumber(year)
-        -- (Timezone logic omitted for brevity but should be included as in original)
-        -- For robust year extraction, returning just year is often sufficient if precise day calc isn't critical
+        month = tonumber(month) or 1
+        day = tonumber(day) or 1
+        hour = tonumber(hour) or 0
+        minute = tonumber(minute) or 0
+        second = tonumber(second) or 0
+
+        -- Handle timezone offset
+        -- If the date is in UTC and we need to convert to CET (UTC+1)
+        -- For example: 1988-12-31T23:00:00+00:00 in UTC = 1989-01-01T00:00:00 in CET
+        if tz_offset then
+            -- Parse timezone offset (e.g., "+00:00", "-05:00", "+01:00", "+0000", "-0500")
+            -- Try with colon first: "+00:00" or "-05:00"
+            local tz_sign, tz_h, tz_m = string.match(tz_offset, "([%+%-])(%d%d):(%d%d)")
+            -- If no colon, try without: "+0000" or "-0500"
+            if not tz_sign then
+                tz_sign, tz_h, tz_m = string.match(tz_offset, "([%+%-])(%d%d)(%d%d)")
+            end
+            -- If still no match, try just hours: "+00" or "-05"
+            if not tz_sign then
+                tz_sign, tz_h = string.match(tz_offset, "([%+%-])(%d%d)")
+                tz_m = "00"
+            end
+
+            if tz_sign and tz_h then
+                local tz_hours = tonumber(tz_h)
+                local tz_minutes = tonumber(tz_m) or 0
+                if tz_sign == "-" then
+                    tz_hours = -tz_hours
+                    tz_minutes = -tz_minutes
+                end
+
+                -- Convert to local time (CET = UTC+1)
+                -- Add minutes as fractional hours for precision
+                hour = hour + TIMEZONE_OFFSET_HOURS - tz_hours
+                minute = minute - tz_minutes
+
+                -- Handle minute overflow/underflow
+                if minute >= 60 then
+                    minute = minute - 60
+                    hour = hour + 1
+                elseif minute < 0 then
+                    minute = minute + 60
+                    hour = hour - 1
+                end
+
+                -- Check if we've crossed into the next day (and potentially next year)
+                if hour >= 24 then
+                    hour = hour - 24
+                    day = day + 1
+                    -- Get days in current month
+                    local days_in_month = 31
+                    if month == 2 then
+                        days_in_month = 28
+                    elseif month == 4 or month == 6 or month == 9 or month == 11 then
+                        days_in_month = 30
+                    end
+                    -- Check if we've crossed into the next month/year
+                    if day > days_in_month then
+                        day = 1
+                        month = month + 1
+                        if month > 12 then
+                            month = 1
+                            year = year + 1
+                        end
+                    end
+                elseif hour < 0 then
+                    hour = hour + 24
+                    day = day - 1
+                    if day < 1 then
+                        month = month - 1
+                        if month < 1 then
+                            month = 12
+                            year = year - 1
+                        end
+                        -- Get days in previous month
+                        local days_in_month = 31
+                        if month == 2 then
+                            days_in_month = 28
+                        elseif month == 4 or month == 6 or month == 9 or month == 11 then
+                            days_in_month = 30
+                        end
+                        day = days_in_month
+                    end
+                end
+            else
+                -- If timezone parsing failed, assume UTC and apply offset
+                hour = hour + TIMEZONE_OFFSET_HOURS
+                if hour >= 24 then
+                    hour = hour - 24
+                    day = day + 1
+                    -- Get days in current month
+                    local days_in_month = 31
+                    if month == 2 then
+                        days_in_month = 28
+                    elseif month == 4 or month == 6 or month == 9 or month == 11 then
+                        days_in_month = 30
+                    end
+                    -- Check if we've crossed into the next month/year
+                    if day > days_in_month then
+                        day = 1
+                        month = month + 1
+                        if month > 12 then
+                            month = 1
+                            year = year + 1
+                        end
+                    end
+                end
+            end
+        else
+            -- No timezone specified, assume UTC and apply offset
+            hour = hour + TIMEZONE_OFFSET_HOURS
+            if hour >= 24 then
+                hour = hour - 24
+                day = day + 1
+                -- Get days in current month
+                local days_in_month = 31
+                if month == 2 then
+                    days_in_month = 28
+                elseif month == 4 or month == 6 or month == 9 or month == 11 then
+                    days_in_month = 30
+                end
+                -- Check if we've crossed into the next month/year
+                if day > days_in_month then
+                    day = 1
+                    month = month + 1
+                    if month > 12 then
+                        month = 1
+                        year = year + 1
+                    end
+                end
+            end
+        end
+
         return year
     end
 
@@ -155,26 +302,29 @@ local function patchCoverBrowser(CoverBrowser)
 
     local function formatYearPagesAndTags(bookinfo, tags_limit)
         local parts = {}
+
+        -- First line: Year • Pages
         local first_line_parts = {}
 
+        -- Add year if available
         if bookinfo.publication_year then
             table.insert(first_line_parts, tostring(bookinfo.publication_year))
         end
 
+        -- Add pages if available
         local pages_text = formatPages(bookinfo)
         if pages_text then
             table.insert(first_line_parts, pages_text)
         end
 
+        -- Join first line with " • "
         if #first_line_parts > 0 then
             table.insert(parts, table.concat(first_line_parts, " • "))
         end
 
+        -- Second line: Tags
         local original_tags = bookinfo._original_keywords
         if original_tags then
-            -- We cannot call original_formatTags if it relies on string manipulation of the hijacked ID
-            -- But typically it just formats a string. We pass original_tags directly.
-            -- NOTE: standard formatTags expects a string of keywords.
             local tags_text = original_formatTags(original_tags, tags_limit)
             if tags_text and tags_text ~= "" then
                 table.insert(parts, tags_text)
@@ -191,16 +341,19 @@ local function patchCoverBrowser(CoverBrowser)
     -- Redefine ptutil.formatTags
     -- ========================================================================
     function ptutil.formatTags(keywords_identifier, tags_limit)
-        -- 1. Try persistent cache
-        local bookinfo = BookInfoManager._pt_patch_cache[keywords_identifier]
+        -- 'keywords_identifier' here is actually the filepath we injected in getBookInfo
+        -- We use it to look up the real data in our cache.
 
+        local bookinfo = bookinfo_cache[keywords_identifier]
+
+        -- Fallback: If cache miss (shouldn't happen), return nil
         if not bookinfo then
-            -- If not found (e.g. non-patched item), fallback to default behavior
-            -- This handles cases where keywords_identifier is actual tags, not a filepath
-            return original_formatTags(keywords_identifier, tags_limit)
+            return nil
         end
 
         local result = formatYearPagesAndTags(bookinfo, tags_limit)
+
+        -- If our chosen metadata is empty, return space so line doesn't collapse
         return result or " "
     end
 
@@ -217,6 +370,7 @@ local function patchCoverBrowser(CoverBrowser)
                 bookinfo._original_keywords = bookinfo.keywords
             end
 
+            -- Extract publication year from EPUB
             if not bookinfo.publication_year then
                 local year = extractPublicationYear(filepath)
                 if year then
@@ -224,11 +378,9 @@ local function patchCoverBrowser(CoverBrowser)
                 end
             end
 
-            -- FIX: Always update the persistent cache
-            BookInfoManager._pt_patch_cache[filepath] = bookinfo
-
-            -- Hijack keywords
+            -- This ensures 'keywords' is never nil, forcing KOReader to call formatTags.
             bookinfo.keywords = filepath
+            bookinfo_cache[filepath] = bookinfo
         end
 
         return bookinfo
@@ -249,3 +401,4 @@ local function patchCoverBrowser(CoverBrowser)
 end
 
 userpatch.registerPatchPluginFunc("coverbrowser", patchCoverBrowser)
+
