@@ -19,6 +19,58 @@ local CUSTOM_FONT_SIZE_OFFSET = nil  -- Default is 3 (smaller than author font)
 local CUSTOM_FONT_MIN = nil   -- Default is 10
 
 -- ============================================================================
+-- Helper Functions
+-- ============================================================================
+local function isLeapYear(year)
+    return (year % 4 == 0 and year % 100 ~= 0) or (year % 400 == 0)
+end
+
+local function getDaysInMonth(month, year)
+    if month == 2 then
+        return isLeapYear(year) and 29 or 28
+    elseif month == 4 or month == 6 or month == 9 or month == 11 then
+        return 30
+    else
+        return 31
+    end
+end
+
+-- Escape a string for safe use in shell commands (POSIX)
+-- Wraps in single quotes and escapes internal single quotes as '\''
+local function escapeShellArg(arg)
+    return "'" .. arg:gsub("'", "'\\''"  ) .. "'"
+end
+
+-- Adjust date/time when hour overflow/underflow occurs
+local function adjustDateForHourChange(year, month, day, hour)
+    if hour >= 24 then
+        hour = hour - 24
+        day = day + 1
+        local days_in_month = getDaysInMonth(month, year)
+        if day > days_in_month then
+            day = 1
+            month = month + 1
+            if month > 12 then
+                month = 1
+                year = year + 1
+            end
+        end
+    elseif hour < 0 then
+        hour = hour + 24
+        day = day - 1
+        if day < 1 then
+            month = month - 1
+            if month < 1 then
+                month = 12
+                year = year - 1
+            end
+            local days_in_month = getDaysInMonth(month, year)
+            day = days_in_month
+        end
+    end
+    return year, month, day, hour
+end
+-- ============================================================================
 -- Patch Implementation
 -- ============================================================================
 local function patchCoverBrowser(CoverBrowser)
@@ -31,9 +83,16 @@ local function patchCoverBrowser(CoverBrowser)
     logger.info("PT Year-Pages-Tags Patch: Loading")
 
     -- Cache indexed by FILEPATH
+    -- Note: Cache entries are never purged, so long KOReader sessions will accumulate entries.
+    -- Each entry is relatively small (one bookinfo table), so this shouldn't cause issues on most systems.
+    -- If needed, implement cache eviction (e.g., LRU or periodic clearing).
     local bookinfo_cache = {}
-
-    local original_formatTags = ptutil.formatTags
+    local function cacheSet(key, value)
+        bookinfo_cache[key] = value
+    end
+    local function cacheGet(key)
+        return bookinfo_cache[key]
+    end
 
     -- ========================================================================
     -- Extract Publication Year from EPUB
@@ -47,31 +106,19 @@ local function patchCoverBrowser(CoverBrowser)
 
         -- Find the OPF file
         local opf_file = nil
-        local locate_opf_command = "unzip -lqq \"" .. filepath .. "\" \"*.opf\" 2>/dev/null"
+        local locate_opf_command = "unzip -lqq " .. escapeShellArg(filepath) .. " \"*.opf\" 2>/dev/null"
         local opf_match_pattern = "(%S+%.opf)$"
-        local line = ""
 
-        if Device:isAndroid() then
-            local fh = io.popen(locate_opf_command, "r")
-            if fh then
-                while true do
-                    line = fh:read()
-                    if line == nil or opf_file ~= nil then
-                        break
-                    end
-                    opf_file = string.match(line, opf_match_pattern)
-                end
-                fh:close()
+        local std_out = io.popen(locate_opf_command, "r")
+        if std_out then
+            for opf_line in std_out:lines() do
+                opf_file = string.match(opf_line, opf_match_pattern)
+                if opf_file then break end
             end
+            std_out:close()
         else
-            local std_out = io.popen(locate_opf_command, "r")
-            if std_out then
-                for opf_line in std_out:lines() do
-                    opf_file = string.match(opf_line, opf_match_pattern)
-                    if opf_file then break end
-                end
-                std_out:close()
-            end
+            logger.warn("PT Year-Pages-Tags Patch: Failed to extract OPF file list for", filepath)
+            return nil
         end
 
         if not opf_file then
@@ -79,35 +126,23 @@ local function patchCoverBrowser(CoverBrowser)
         end
 
         -- Extract and parse the OPF file
-        local expand_opf_command = "unzip -p \"" .. filepath .. "\" \"" .. opf_file .. "\" 2>/dev/null"
+        local expand_opf_command = "unzip -p " .. escapeShellArg(filepath) .. " " .. escapeShellArg(opf_file) .. " 2>/dev/null"
         local dc_date = nil
 
-        if Device:isAndroid() then
-            local fh = io.popen(expand_opf_command, "r")
-            if fh then
-                for opf_line in fh:lines() do
-                    -- Look for dc:date tag
-                    local date_match = string.match(opf_line, "<dc:date[^>]*>([^<]+)</dc:date>")
-                    if date_match then
-                        dc_date = date_match
-                        break
-                    end
+        local std_out = io.popen(expand_opf_command, "r")
+        if std_out then
+            for opf_line in std_out:lines() do
+                -- Look for dc:date tag
+                local date_match = string.match(opf_line, "<dc:date[^>]*>([^<]+)</dc:date>")
+                if date_match then
+                    dc_date = date_match
+                    break
                 end
-                fh:close()
             end
+            std_out:close()
         else
-            local std_out = io.popen(expand_opf_command, "r")
-            if std_out then
-                for opf_line in std_out:lines() do
-                    -- Look for dc:date tag
-                    local date_match = string.match(opf_line, "<dc:date[^>]*>([^<]+)</dc:date>")
-                    if date_match then
-                        dc_date = date_match
-                        break
-                    end
-                end
-                std_out:close()
-            end
+            logger.warn("PT Year-Pages-Tags Patch: Failed to extract OPF content for", filepath)
+            return nil
         end
 
         if not dc_date then
@@ -193,92 +228,17 @@ local function patchCoverBrowser(CoverBrowser)
                     hour = hour - 1
                 end
 
-                -- Check if we've crossed into the next day (and potentially next year)
-                if hour >= 24 then
-                    hour = hour - 24
-                    day = day + 1
-                    -- Get days in current month
-                    local days_in_month = 31
-                    if month == 2 then
-                        days_in_month = 28
-                    elseif month == 4 or month == 6 or month == 9 or month == 11 then
-                        days_in_month = 30
-                    end
-                    -- Check if we've crossed into the next month/year
-                    if day > days_in_month then
-                        day = 1
-                        month = month + 1
-                        if month > 12 then
-                            month = 1
-                            year = year + 1
-                        end
-                    end
-                elseif hour < 0 then
-                    hour = hour + 24
-                    day = day - 1
-                    if day < 1 then
-                        month = month - 1
-                        if month < 1 then
-                            month = 12
-                            year = year - 1
-                        end
-                        -- Get days in previous month
-                        local days_in_month = 31
-                        if month == 2 then
-                            days_in_month = 28
-                        elseif month == 4 or month == 6 or month == 9 or month == 11 then
-                            days_in_month = 30
-                        end
-                        day = days_in_month
-                    end
-                end
+                -- Adjust date for hour changes, accounting for leap years
+                year, month, day, hour = adjustDateForHourChange(year, month, day, hour)
             else
                 -- If timezone parsing failed, assume UTC and apply offset
                 hour = hour + TIMEZONE_OFFSET_HOURS
-                if hour >= 24 then
-                    hour = hour - 24
-                    day = day + 1
-                    -- Get days in current month
-                    local days_in_month = 31
-                    if month == 2 then
-                        days_in_month = 28
-                    elseif month == 4 or month == 6 or month == 9 or month == 11 then
-                        days_in_month = 30
-                    end
-                    -- Check if we've crossed into the next month/year
-                    if day > days_in_month then
-                        day = 1
-                        month = month + 1
-                        if month > 12 then
-                            month = 1
-                            year = year + 1
-                        end
-                    end
-                end
+                year, month, day, hour = adjustDateForHourChange(year, month, day, hour)
             end
         else
             -- No timezone specified, assume UTC and apply offset
             hour = hour + TIMEZONE_OFFSET_HOURS
-            if hour >= 24 then
-                hour = hour - 24
-                day = day + 1
-                -- Get days in current month
-                local days_in_month = 31
-                if month == 2 then
-                    days_in_month = 28
-                elseif month == 4 or month == 6 or month == 9 or month == 11 then
-                    days_in_month = 30
-                end
-                -- Check if we've crossed into the next month/year
-                if day > days_in_month then
-                    day = 1
-                    month = month + 1
-                    if month > 12 then
-                        month = 1
-                        year = year + 1
-                    end
-                end
-            end
+            year, month, day, hour = adjustDateForHourChange(year, month, day, hour)
         end
 
         return year
@@ -324,10 +284,15 @@ local function patchCoverBrowser(CoverBrowser)
 
         -- Second line: Tags
         local original_tags = bookinfo._original_keywords
-        if original_tags then
-            local tags_text = original_formatTags(original_tags, tags_limit)
-            if tags_text and tags_text ~= "" then
-                table.insert(parts, tags_text)
+        if original_tags and original_tags ~= "" then
+            -- If tags are already formatted with bullets, use as-is
+            -- Otherwise, replace newlines with bullet separators
+            if original_tags:find("•") then
+                table.insert(parts, original_tags)
+            else
+                -- Replace newlines and multiple spaces with bullet separators
+                local formatted = original_tags:gsub("\n+", " • "):gsub("%s+", " ")
+                table.insert(parts, formatted)
             end
         end
 
@@ -344,11 +309,18 @@ local function patchCoverBrowser(CoverBrowser)
         -- 'keywords_identifier' here is actually the filepath we injected in getBookInfo
         -- We use it to look up the real data in our cache.
 
-        local bookinfo = bookinfo_cache[keywords_identifier]
+        local bookinfo = cacheGet(keywords_identifier)
 
-        -- Fallback: If cache miss (shouldn't happen), return nil
+        -- Fallback: If cache miss, try to reload from BookInfoManager
         if not bookinfo then
-            return nil
+            -- Cache was cleared (plugin reloaded, view switched, etc.)
+            -- Attempt to reload the bookinfo
+            bookinfo = BookInfoManager:getBookInfo(keywords_identifier, false)
+
+            if not bookinfo then
+                logger.warn("PT Year-Pages-Tags Patch: Failed to reload bookinfo for", keywords_identifier)
+                return nil
+            end
         end
 
         local result = formatYearPagesAndTags(bookinfo, tags_limit)
@@ -380,7 +352,7 @@ local function patchCoverBrowser(CoverBrowser)
 
             -- This ensures 'keywords' is never nil, forcing KOReader to call formatTags.
             bookinfo.keywords = filepath
-            bookinfo_cache[filepath] = bookinfo
+            cacheSet(filepath, bookinfo)
         end
 
         return bookinfo
@@ -401,4 +373,3 @@ local function patchCoverBrowser(CoverBrowser)
 end
 
 userpatch.registerPatchPluginFunc("coverbrowser", patchCoverBrowser)
-
