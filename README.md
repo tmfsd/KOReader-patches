@@ -32,3 +32,11 @@ local CUSTOM_FONT_MIN = 12
 <img width="1264" height="840" alt="image" src="https://github.com/user-attachments/assets/a3e506d5-399a-496a-93d4-52c2f9793a20" />
 
 This patch removes blank placeholders from the folder covers in Cover Grid view and Cover List view if a folder and it\'s subfolders hold less than four books.
+
+-----
+
+## [🞂 2-pt-modify-series-subseries-format.lua](2-pt-modify-series-subseries-format.lua)
+
+Based on [2-pt-modify-series-format.lua](https://github.com/loeffner/KOReader.patches/blob/main/project-title/2-pt-modify-series-format.lua)
+
+Customize the format of the series in listview. Also displays the subseries if available.
