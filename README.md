@@ -42,3 +42,9 @@ Based on [2-pt-modify-series-format.lua](https://github.com/loeffner/KOReader.pa
 <img width="1264" height="401" alt="image" src="https://github.com/user-attachments/assets/ad80cb43-114b-4aa0-b444-8bb9557b0cab" />
 
 Customize the format of the series in listview. Also displays the subseries if available.
+
+-----
+
+## [🞂 2-pt-hide-author.lua](2-pt-hide-author.lua)
+
+Hides the author(s) if a series/subseries is displayed.
