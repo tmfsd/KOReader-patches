@@ -39,4 +39,6 @@ This patch removes blank placeholders from the folder covers in Cover Grid view 
 
 Based on [2-pt-modify-series-format.lua](https://github.com/loeffner/KOReader.patches/blob/main/project-title/2-pt-modify-series-format.lua)
 
+<img width="1264" height="401" alt="image" src="https://github.com/user-attachments/assets/ad80cb43-114b-4aa0-b444-8bb9557b0cab" />
+
 Customize the format of the series in listview. Also displays the subseries if available.
