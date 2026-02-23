@@ -43,6 +43,8 @@ Based on [2-pt-modify-series-format.lua](https://github.com/loeffner/KOReader.pa
 
 Customize the format of the series in listview. Also displays the subseries if available.
 
+**Note:** The field for the subseries in Calibre should be named "Subseries" (#subseries). If not you might have to edit the patch accordingly.
+
 -----
 
 ## [🞂 2-pt-hide-author.lua](2-pt-hide-author.lua)
