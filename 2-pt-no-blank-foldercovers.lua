@@ -195,4 +195,4 @@ local function patchCoverBrowser(plugin)
     logger.info("PT No-Blank-FolderCovers Patch: Applied")
 end
 
-userpatch.registerPatchPluginFunc("coverbrowser", patchCoverBrowser)
+userpatch.registerPatchPluginFunc("projecttitle", patchCoverBrowser)
