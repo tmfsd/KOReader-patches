@@ -186,4 +186,4 @@ local function patchCoverBrowser(plugin)
     logger.info("PT Series-Subseries Format Patch: Applied.")
 end
 
-userpatch.registerPatchPluginFunc("coverbrowser", patchCoverBrowser)
+userpatch.registerPatchPluginFunc("projecttitle", patchCoverBrowser)
