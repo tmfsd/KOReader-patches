@@ -372,4 +372,4 @@ local function patchCoverBrowser(CoverBrowser)
     logger.info("PT Year-Pages-Tags Patch: Applied.")
 end
 
-userpatch.registerPatchPluginFunc("coverbrowser", patchCoverBrowser)
+userpatch.registerPatchPluginFunc("projecttitle", patchCoverBrowser)
